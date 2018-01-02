@@ -3,8 +3,6 @@ layout: post
 title: "Writing abstractions for FFI callback interfaces"
 categories: rust
 ---
-# Writing abstractions for FFI callback interfaces
-
 Everyone's favourite pastime!
 
 Callbacks can be separated in two categories: those which pass a context pointer and those which don't. They require considerably different designs to abstract over!
