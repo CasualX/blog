@@ -1,41 +1,11 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en-us">
-<head>
-   <meta http-equiv="content-type" content="text/html; charset=utf-8" />
-   <title>{{ page.title }}</title>
-   <meta name="author" content="Casper" />
-
-   <!-- syntax highlighting CSS -->
-   <link rel="stylesheet" href="/css/syntax.css" type="text/css" />
-
-   <!-- Homepage CSS -->
-   <link rel="stylesheet" href="/css/screen.css" type="text/css" media="screen, projection" />
-</head>
+<html lang="en">
+{% include head.html %}
 <body>
+  <div class="content-container">
+    {{ content }}
 
-<div class="site">
-  <div class="title">
-    <a href="/">Casper</a>
-    <a class="extra" href="/">home</a>
+    {% include footer.html %}
   </div>
-
-  {{ content }}
-
-  <div class="footer">
-    <div class="contact">
-      <p>
-        Casper
-        <br />
-        CasualX@GitHub.com
-      </p>
-    </div>
-    <div class="contact">
-      <p>
-        <a href="https://github.com/CasualX/">github.com/CasualX</a><br />
-      </p>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>
