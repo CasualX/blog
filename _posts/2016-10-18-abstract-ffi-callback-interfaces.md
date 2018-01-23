@@ -13,7 +13,7 @@ Let us consider an extern function that simply calls the callback.
 
 ```rust
 mod sys {
-	use ::std::os::raw::{c_void, c_int};
+	use std::os::raw::{c_void, c_int};
 
 	// This looks ugly but it's pretty simple:
 	// It iterates over some abstract items, calling the callback for each
@@ -39,8 +39,8 @@ Creating an abstraction for this is pretty simple.
 Keep in mind that the API only allows us to pass a thin pointer and `&mut FnMut()` is a fat pointer! Furtunately `mem::transmute` will catch such mistakes. `&mut &mut FnMut()` is a thin pointer but for my sanity I like to write it out with an explicit struct.
 
 ```rust
-use ::std::mem;
-use ::std::os::raw::{c_void, c_int};
+use std::mem;
+use std::os::raw::{c_void, c_int};
 
 // Explicit context for the wrapper.
 struct Items<'a>(&'a mut FnMut(i32) -> bool);
@@ -103,8 +103,8 @@ Let us consider this extern function. Note the lack of any context parameter whe
 
 ```rust
 mod sys {
-	use ::std::mem;
-	use ::std::os::raw::{c_void, c_int};
+	use std::mem;
+	use std::os::raw::{c_void, c_int};
 
 	// The handler fn, maybe null.
 	// Adds some parameters to avoid a trivial solution.
@@ -143,7 +143,7 @@ type HandlerFn = Option<fn(HandArg)>;
 With this in mind let us try a naive approach. Since there is no context parameter, we'll just accept an `fn()` argument directly.
 
 ```rust
-use ::std::os::raw::{c_int, c_float, c_void};
+use std::os::raw::{c_int, c_float, c_void};
 
 // Wrapper transforming the arguments before handling control to the user.
 unsafe extern "C" fn thunk(ty: c_int, data: *mut c_void) {
@@ -177,7 +177,7 @@ For this to work, `thunk` needs to be duplicated for every `fn` handler so the t
 Actually, not really, generics do _exactly_ this, they generate unique instances for every unique type you give it. Unfortunately the direct translation would require Rust support value generics and could look like this (imaginary syntax):
 
 ```rust
-use ::std::os::raw::{c_int, c_float, c_void};
+use std::os::raw::{c_int, c_float, c_void};
 
 // Imaginary generics syntax, constrain value parameter by its type.
 unsafe extern "C" fn thunk<f: fn(HandArg)>(ty: c_int, data: *mut c_void) {
@@ -201,7 +201,7 @@ One thing to take away from this is that _generic parameters_ do not affect the 
 So let us use the next best thing with a little more boilerplate: traits!
 
 ```rust
-use ::std::os::raw::{c_int, c_float, c_void};
+use std::os::raw::{c_int, c_float, c_void};
 
 pub trait Handler {
 	// Implement this!

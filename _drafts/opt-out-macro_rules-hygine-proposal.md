@@ -12,9 +12,9 @@ Any identifiers created within the macro will not collide with any arguments.
 
 ```rust
 macro_rules! add_one {
-	($expr:expr) => {
-		let val = $expr;
-		val + 1
+	($var:ident) => {
+		let val = 1;
+		val + $var
 	}
 }
 
@@ -71,7 +71,7 @@ macro_rules! create_ident {
 
 The first argument specifies the syntactic context in which the identifier should be created followed by a commo and followed by one or more identifiers which should be concatenated.
 
-This provides a very clean, eplicit opt-out mechanism to macro hygine.
+This provides a very clean, explicit opt-out mechanism to macro hygine.
 
 The original example would then look like this:
 
@@ -91,7 +91,4 @@ create_fn!(foo);
 
 fn main() {}
 ```
-
-## Feasability
-
 
