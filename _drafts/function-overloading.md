@@ -11,12 +11,12 @@ Rust has no traditional overloading, you cannot define two methods with the same
 Trying to be clever with traits also doesn't work:
 
 ```rust
-trait Foo_A { fn foo(_: i32); }
-trait Foo_B { fn foo(_: &str); }
+trait FooA { fn foo(_: i32); }
+trait FooB { fn foo(_: &str); }
 
 struct Foo;
-impl Foo_A for Foo { fn foo(_: i32) {} }
-impl Foo_B for Foo { fn foo(_: &str) {} }
+impl FooA for Foo { fn foo(_: i32) { println!("FooA"); } }
+impl FooB for Foo { fn foo(_: &str) { println!("FooB"); } }
 ```
 
 Then try to call the function with a `&str` argument type:
@@ -33,15 +33,15 @@ Instead this example requires an explicit disambiguation:
 
 ```rust
 fn main() {
-	<Foo as Foo_B>::foo("hello");
+	<Foo as FooB>::foo("hello");
 }
 ```
 
-[Playground](https://play.rust-lang.org/?gist=13019a9b093a002ae0b6a15b81be99b2&version=stable)
+[Playground](https://play.rust-lang.org/?gist=9df9128c20b9c612806223dd91a70de0&version=stable)
 
 However, that defeats the point of overloading.
 
-At the end of this blog post demonstrates Rust can get pretty close to traditional overloading through the use of its trait system and generics.
+At the end of this blog post I will show that Rust can get pretty close to traditional overloading through the use of its trait system and generics.
 
 ## Static polymorphism
 
@@ -66,7 +66,7 @@ fn main() {
 }
 ```
 
-[Playground](https://play.rust-lang.org/?gist=538781b908642b4d578778b7ab64432f&version=stable)
+[Playground](https://play.rust-lang.org/?gist=7286491e1d741d0817eb7868bb1d41fc&version=stable)
 
 Perhaps the best demonstration of this is [the `ToString` trait](https://doc.rust-lang.org/std/string/trait.ToString.html) which accepts a whole host of types:
 
@@ -75,6 +75,7 @@ fn print_str<T: ToString>(value: T) {
 	let s = value.to_string();
 	println!("{}", s);
 }
+
 fn main() {
 	print_str(42);
 	print_str(3.141593);
@@ -84,7 +85,7 @@ fn main() {
 }
 ```
 
-[Playground](https://play.rust-lang.org/?gist=566e593421a8bc24d5f0bc4ace7eb9ba&version=stable)
+[Playground](https://play.rust-lang.org/?gist=a02e3e28783ddc33ff07ec92db600422&version=stable)
 
 This kind of overloading makes your API more accessible for your users. They won't be burdened by ensuring the arguments are converted to the correct type your API expects, you'll do it for them. The result is an API which is more pleasant to use.
 
@@ -143,8 +144,6 @@ pub trait CustomFoo {
 This makes the trait very awkward as the `self` and arguments are swapped:
 
 ```rust
-pub struct Foo(bool);
-
 impl CustomFoo for i32 {
 	fn custom_foo(self, this: &Foo) {
 		println!("Foo({}) i32: {}", this.0, self);
@@ -170,8 +169,8 @@ Let's provide a wrapper for the trait so it doesn't have to be called through th
 pub struct Foo(bool);
 
 impl Foo {
-	pub fn foo<T: CustomFoo>(&self, arg: T) -> T {
-		arg.custom_foo(self)
+	pub fn foo<T: CustomFoo>(&self, arg: T) {
+		arg.custom_foo(self);
 	}
 }
 
@@ -182,7 +181,7 @@ fn main() {
 }
 ```
 
-[Playground](https://play.rust-lang.org/?gist=dcff3002e5bef6706085dd622829566f&version=stable)
+[Playground](https://play.rust-lang.org/?gist=83347c7604dc08886f32cdd1395a889e&version=stable)
 
 An example of this technique can be found in the standard library in [the `Pattern` trait](https://doc.rust-lang.org/std/str/pattern/trait.Pattern.html) used by various string matching [functions like `str::find`](https://doc.rust-lang.org/std/primitive.str.html#method.find).
 
@@ -241,11 +240,11 @@ Try to uncomment last line and observe the helpful error message when the functi
 fn main() {
 	Foo.foo(42, 3.14159);
 	Foo.foo("hello", '😄');
-	// Foo.foo('😏', 13); // Overload not implemented
+	// Foo.foo('😏', 13); // the trait bound is not satisfied
 }
 ```
 
-[Playground](https://play.rust-lang.org/?gist=ba7c0e9e321f48c5d53961cbc6b81a2f&version=stable)
+[Playground](https://play.rust-lang.org/?gist=880fae763e1c7c6f3b7c8619b6c97867&version=stable)
 
 ## Final notes
 
