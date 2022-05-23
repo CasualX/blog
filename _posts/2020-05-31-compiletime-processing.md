@@ -63,7 +63,9 @@ pub const fn obfuscate<const LEN: usize>(s: &str, key: u8) -> ObfString<[u8; LEN
 
 To make this code work some magic is required. First of `for` loops are not supported but while loops are, they must be enabled with the `const_loop` and `const_if_match` features.
 
-Inspect a complete example on the [playground](https://play.rust-lang.org/?version=nightly&mode=debug&edition=2018&gist=ff83b7b413e1a3967c871c20be2c4fc2), it prints:
+**UPDATE** 05/23/2022: `const_loop` and `const_if_match` have been stabilized in Rust 1.46.0. This now compiles fine with stable Rust
+
+Inspect a complete example on the [playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=0e698b86d836e358d9eb164a971db90d), it prints:
 
 ```
 ObfString { key: ca, data: [a2, af, a6, a6, a5] }
