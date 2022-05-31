@@ -10,7 +10,7 @@ With the recent progress on const and generic functions in Rust I decided to see
 
 ## Part I: Compiletime string processing
 
-The crate under inspection is my [`obfstr`](https://crates.io/crates/obfstr) crate which (among some other utilities) provides compiletime string obfuscation. I want to rewrite it using const fn instead of using proc-macros. The result of the rewrite can be found [here](https://github.com/CasualX/obfstr/blob/rewrite/src/lib.rs).
+The crate under inspection is my [`obfstr`](https://crates.io/crates/obfstr) crate which (among some other utilities) provides compiletime string obfuscation. I want to rewrite it using const fn instead of using proc-macros.
 
 The idea of string obfuscation is to avoid baking the string literal as-is in the binary and instead store an obfuscated version of the string which gets deobfuscated as needed.
 
@@ -42,7 +42,7 @@ macro_rules! obfuscate {
 
 Note the use of `{$s.len()}` when passing the length as the const generic argument. It would be nice if there was some way for some kind of type inference to deduce the LEN parameter based on the input's length.
 
-Putting it together: [playground](https://play.rust-lang.org/?version=nightly&mode=debug&edition=2018&gist=57e9c603758382f240d7707c1757d3eb)
+Putting it together: [playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=ff10a24947a0c247396cca2e099ba445)
 
 Of course this isn't yet very useful but we've managed to define the basic ingredients and the Rust compiler doesn't complain!
 
@@ -61,9 +61,9 @@ pub const fn obfuscate<const LEN: usize>(s: &str, key: u8) -> ObfString<[u8; LEN
 }
 ```
 
-To make this code work some magic is required. First of `for` loops are not supported but while loops are, they must be enabled with the `const_loop` and `const_if_match` features.
+To make this code work some magic is required. First of `for` loops are not supported but while loops are.
 
-Inspect a complete example on the [playground](https://play.rust-lang.org/?version=nightly&mode=debug&edition=2018&gist=ff83b7b413e1a3967c871c20be2c4fc2), it prints:
+Inspect a complete example on the [playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=f454e8966aadcc0372d4fc4ae3187c6c), it prints:
 
 ```
 ObfString { key: ca, data: [a2, af, a6, a6, a5] }
@@ -71,7 +71,7 @@ ObfString { key: ca, data: [a2, af, a6, a6, a5] }
 
 Success!
 
-Another example to blow your mind is a compiletime UTF-8 to UTF-16 converter: [playground](https://play.rust-lang.org/?version=nightly&mode=debug&edition=2018&gist=90a71fba36b1471ffafcbae8b1e80e18)
+Another example to blow your mind is a compiletime UTF-8 to UTF-16 converter: [playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=3f65a51ef44e449f598016eb244a5291)
 
 ```rust
 fn main() {
@@ -142,7 +142,7 @@ macro_rules! entropy {
 ```
 <!-- {% endraw %} -->
 
-See it in action: [playground](https://play.rust-lang.org/?version=nightly&mode=debug&edition=2018&gist=8a3b823a332e88e80f6210ad4bb0edb2)
+See it in action: [playground](https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=5d0ec37da9d8bbe4198d3c6370ff5a52)
 
 It should reliably print `17854532005703890967, 8926035397751327455` for everyone. Tiny pertubations in the source code will produce different entropy, even shifting the line with the `entropy!()` macro with a single space character.
 
