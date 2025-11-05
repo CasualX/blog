@@ -1,0 +1,8 @@
+[package]
+name = "makeblog"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+markdown = "1.0"
+mdast_util_to_markdown = "0.0.2"

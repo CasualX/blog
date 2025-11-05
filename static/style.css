@@ -1,0 +1,292 @@
+/* Reset + Base */
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #0d1117;
+  color: #c9d1d9;
+  line-height: 1.6;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  background: #161b22;
+  padding: 2rem;
+  border-right: 1px solid #30363d;
+}
+
+.blog-title a {
+  color: #f0f6fc;
+  text-decoration: none;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.tagline {
+  color: #8b949e;
+  margin-bottom: 1rem;
+}
+
+.socials a {
+  display: block;
+  margin: 0.25rem 0;
+  color: #58a6ff;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.socials a:hover {
+  color: #79c0ff;
+}
+
+/* ======= SINGLE POST PAGE REFINEMENTS ======= */
+
+.post {
+  padding: 2rem 3rem;
+  max-width: 850px;
+}
+
+.post h1 {
+  font-size: 2rem;
+  color: #f0f6fc;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  letter-spacing: -0.01em;
+}
+
+.meta {
+  color: #8b949e;
+  font-size: 0.9rem;
+  margin-bottom: 2rem;
+  opacity: 0.9;
+}
+
+.meta .author {
+  font-style: italic;
+}
+
+.meta .tags-inline {
+  color: #6e7681;
+}
+
+/* remove old chunky tags entirely */
+.tags {
+  display: none;
+}
+
+/* Body text */
+.post p {
+  margin-bottom: 1rem;
+  color: #c9d1d9;
+  line-height: 1.7;
+}
+
+/* Links inside post content (dark mode friendly) */
+.post a {
+  color: #58a6ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(88, 166, 255, 0.4);
+  transition: color 0.2s ease, text-decoration-color 0.2s ease;
+}
+.post a:hover {
+  color: #79c0ff;
+  text-decoration-color: rgba(121, 192, 255, 0.7);
+}
+.post a:visited {
+  color: #8bb8ff;
+}
+.post a:focus-visible {
+  outline: 2px solid #1f6feb;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* keep inline code inside links readable */
+.post a code {
+  color: inherit;
+}
+
+/* Code Blocks */
+pre {
+  background: #161b22;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid #30363d;
+  box-shadow: 0 0 8px rgba(56, 139, 253, 0.1);
+}
+
+code {
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9rem;
+  color: #79c0ff;
+}
+
+/* SVG */
+svg {
+  margin-top: 1rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+
+/* Make inline SVGs readable in dark mode without heavy inversion */
+.post svg {
+  /* subtle light panel behind light-mode SVGs so dark strokes pop */
+  background-color: rgba(240, 246, 252, 0.06); /* soft blue-tinted panel */
+  padding: 10px;
+  color: #c9d1d9; /* for SVGs that use currentColor */
+}
+
+/* Nudge common hard-coded black to a lighter tone in dark mode */
+.post svg [fill="#000"],
+.post svg [fill="#000000"],
+.post svg [fill="black"] {
+  fill: #c9d1d9;
+}
+.post svg [stroke="#000"],
+.post svg [stroke="#000000"],
+.post svg [stroke="black"] {
+  stroke: #c9d1d9;
+}
+
+/* Footer stays minimal */
+.footer {
+  border-top: 1px solid #30363d;
+  margin-top: 3rem;
+  padding-top: 1rem;
+  font-size: 0.8rem;
+  color: #8b949e;
+}
+
+.footer a {
+  color: #58a6ff;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid #30363d;
+  }
+}
+
+/* ========== INDEX PAGE REFINED BALANCED ========== */
+.post-list {
+  padding: 2rem 3rem;
+  max-width: 850px;
+}
+
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.list-header h1 {
+  font-size: 2rem;           /* back to stronger size */
+  color: #f0f6fc;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Tag Filter Toolbar */
+.tag-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #8b949e;
+}
+
+.filter-label {
+  opacity: 0.6;
+}
+
+.filter-tags {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.tag-filter-btn {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.tag-filter-btn:hover {
+  color: #58a6ff;
+}
+
+.tag-filter-btn.active {
+  color: #58a6ff;
+  font-weight: 500;
+}
+
+/* Compact post cards */
+.post-card {
+  border-bottom: 1px solid #21262d;
+  padding: 0.85rem 0;
+  line-height: 1.5;
+}
+
+.post-card:last-child {
+  border-bottom: none;
+}
+
+/* 🎯 Adjusted hierarchy + contrast */
+.post-card h2 {
+  font-size: 1.1rem;
+  font-weight: 500;            /* less heavy, calmer tone */
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.post-card h2 a {
+  color: #c9d1d9;              /* softer than pure white */
+  text-decoration: none;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.post-card h2 a:hover {
+  color: #58a6ff;
+}
+
+.meta-line {
+  color: #8b949e;
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
+  opacity: 0.85;
+}
+
+.meta-line .tags-inline {
+  color: #6e7681;
+}
+
+/* Footer remains subtle */
+.footer {
+  border-top: 1px solid #30363d;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  font-size: 0.8rem;
+  color: #8b949e;
+}
