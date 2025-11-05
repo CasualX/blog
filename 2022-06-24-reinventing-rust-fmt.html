@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casper's Blog – Reinventing Rust formatting syntax</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h1 class="blog-title"><a href="index.html">Casper's Blog</a></h1>
+      <p class="tagline">Thoughts on code, systems, and craft.</p>
+      <div class="socials">
+        <a href="https://github.com/CasualX">GitHub</a>
+      </div>
+    </aside>
+
+    <!-- Blog post -->
+    <main class="post">
+
+
+<article>
+  <h1>Reinventing Rust formatting syntax</h1>
+  <div class="meta"><span class="date">June 24, 2022</span> — <span class="author">by Casper</span> — <span class="tags-inline">rust</span></div>
+<p>In this post I'm announcing my crate <code>fmtools</code>, some links if you prefer those: <a href="https://github.com/CasualX/fmtools">github</a>, <a href="https://crates.io/crates/fmtools">crates.io</a>, <a href="https://docs.rs/fmtools">docs.rs</a>.</p>
+<p>Formatting large blocks of text interspersed with formatted values has always been really awkward in Rust (and other programming languages, really):</p>
+<pre><code class="language-rust">let values = [1, 2, 0, 4, 5];
+let separator = &quot;------------&quot;;
+
+let s = format!(&quot;\
+	First value: {}\n\
+	Second value: {}\n\
+	Third value: {}\n\
+	{}\n\
+	Fourth value: {}\n\
+	Fifth value: {}\n&quot;,
+	values[0], values[1], values[2],
+	separator,
+	values[3], values[4]);
+</code></pre>
+<p>Maintaining such code is hard enough, it becomes even more tricky if you only want to emit part of the formatting on some condition. Eg. only display the third line if the third value is non-zero.</p>
+<p>There have been various attempts at making this use case work better in Rust but I haven't been following any of the discussion and set out to do my own thing. I heard you can now use implicit identifiers in format arguments? Rookie stuff.</p>
+<p>While formatting expressions in format strings has been implemented in other languages they tend to come with various restrictions:</p>
+<ul>
+<li>Python requires an alternative syntax for the string literal inside an f-string: <a href="https://stackoverflow.com/questions/71627968/why-can-i-not-embed-a-string-literal-inside-an-f-string">link</a>.</li>
+<li>Requires escaping the braces <code>{%raw%}{{}}{%endraw%}</code> if you want to write them.</li>
+<li>Rust's formatting syntax is <em>still</em> extremely limited.</li>
+<li>No language I know allows custom control flow to conditionally emit a piece of the formatting string.</li>
+<li>Probably more that I cannot think of right now...</li>
+</ul>
+<p>Here's an example of how control flow may come up expressed with consecutive <code>print!</code>:</p>
+<pre><code class="language-rust">let power = 0.5;
+
+print!(&quot;At &quot;);
+if power &gt;= 1.0 {
+	print!(&quot;full&quot;);
+}
+else {
+	print!(&quot;{:.0}%&quot;, power * 100.0);
+}
+print!(&quot; power&quot;);
+</code></pre>
+<p>How would <em>you</em> express this simple task in an elegant format string?</p>
+<p>I present to you my solution to these problems for both examples:</p>
+<pre><code class="language-rust">let values = [1, 2, 0, 4, 5];
+let separator = &quot;------------&quot;;
+
+let s = fmtools::format! {
+	&quot;First value: &quot;{values[0]}&quot;\n&quot;
+	&quot;Second value: &quot;{values[1]}&quot;\n&quot;
+	if values[2] != 0 {
+		&quot;Third value: &quot;{values[2]}&quot;\n&quot;
+	}
+	{separator}&quot;\n&quot;
+	&quot;Fourth value: &quot;{values[3]}&quot;\n&quot;
+	&quot;Fifth value: &quot;{values[4]}&quot;\n&quot;
+};
+</code></pre>
+<pre><code class="language-rust">let power = 0.5;
+
+fmtools::println!(&quot;At &quot;
+	if power &gt;= 1.0 { &quot;full&quot; }
+	else { {power * 100.0:.0}&quot;%&quot; }
+	&quot; power&quot;);
+</code></pre>
+<p>Implemented in a single, no_std compatible, zero dependencies crate: <a href="https://github.com/CasualX/fmtools">github</a>, <a href="https://crates.io/crates/fmtools">crates.io</a>, <a href="https://docs.rs/fmtools">docs.rs</a>.</p>
+<p>Features:</p>
+<ul>
+<li>
+<p>Allows arbitrary expressions inside the formatting braces.</p>
+</li>
+<li>
+<p>Generates optimized Rust code at compiletime.</p>
+<p>All the parsing is done at compiletime by the macro and the control flow is lowered to native Rust code, exactly as written.</p>
+</li>
+<li>
+<p>Supports rust-analyzer autocomplete, refactoring and more!</p>
+<p>This is more because rust-analyzer is awesome! It's successful at looking back from the generated code and where an expression is expected it's able to provide completion and renaming features. Read more about it <a href="https://rust-analyzer.github.io/blog/2021/11/21/ides-and-macros.html">here</a>!</p>
+<p>Some special care was taking when writing stuff like <code>if</code> expressions before you've written the <code>{}</code> that the macro expands in a way that rust-analyzer can follow along and provide IDE features.</p>
+<pre><code class="language-rust">let cond = true;
+fmtools::format!(if cond.) // autocomplete works, but does not compile!
+</code></pre>
+</li>
+<li>
+<p>Supports Rust's standard formatting specifiers.</p>
+<p>When formatting specifiers are encountered the macro falls back to <code>format_args!</code> for the actual implementation giving access to all its features.</p>
+</li>
+<li>
+<p>Single package, no proc-macro, no_std compatible, no extra dependencies.</p>
+<p>Proc-macros complicate things, require extra build step and trust that the proc-macro won't do something it shouldn't.</p>
+<p>The package drags in no extra dependencies, it's fully self contained!</p>
+</li>
+<li>
+<p>Create <code>let</code> bindings to store temporary values for formatting.</p>
+<p>Useful for more complex templates and allows the value to be printed multiple times while only being evaluated once.</p>
+<p>Rust's standard formatting equivalent is <a href="https://doc.rust-lang.org/std/fmt/index.html#positional-parameters">positional parameters</a>, here's what I have to say about that:</p>
+<pre><code class="language-rust">fmtools::format!(
+	let (one, two) = (1, 2);
+	{two}&quot; &quot;{one}&quot; &quot;{one}&quot; &quot;{two}); // =&gt; &quot;2 1 1 2&quot;
+</code></pre>
+<p>Okay this is pretty contrived and looks worse here, but in larger format strings this works out well!</p>
+</li>
+<li>
+<p>Control flow allows conditional and repeated formatting.</p>
+<p>As demonstrated earlier, control flow in the form of <code>if</code>, <code>if let</code>, <code>else</code>, <code>match</code>, <code>for</code> make it really nice to format larger and more complex strings while keeping your code maintainable.</p>
+</li>
+<li>
+<p>Capture variables by value or by reference.</p>
+<p>Values of <code>format_args!</code> <a href="https://users.rust-lang.org/t/why-cant-i-return-format-args-from-a-closure/39281">cannot be returned</a> from closures or functions. Rust's standard formatting simply does not support this. <code>fmtools</code> is built on closures which allows variables to be captured by value instead of by reference.</p>
+<p>The <code>fmtools::fmt!</code> macro enables this behavior by starting the formatting with <code>move</code> just like closures!</p>
+<pre><code class="language-rust">fn main() {
+	let values = [1, 2, 3, 4, 5];
+
+	// Without `move` this would not pass the borrow checker
+	let formatted = fmtools::join(&quot;, &quot;,
+		values.iter().map(|v| fmtools::fmt!(move &quot;x&quot;{v})));
+
+	println!(&quot;{}&quot;, formatted); // =&gt; &quot;x1, x2, x3, x4, x5&quot;
+}
+</code></pre>
+</li>
+<li>
+<p>Escape hatch to inject custom formatting code.</p>
+<p>If all else fails use closure syntax to access the underlying <code>&amp;mut std::fmt::Formatter</code> and inject custom formatting code:</p>
+<pre><code class="language-rust">fmtools::format! {
+	&quot;Now entering [&quot;
+	|f| f.write_str(&quot;custom formatting&quot;)?;
+	&quot;]&quot;
+}
+</code></pre>
+</li>
+</ul>
+
+</article>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>© 2022 Casper — Content licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a></p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

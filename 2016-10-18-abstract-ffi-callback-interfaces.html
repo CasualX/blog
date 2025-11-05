@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casper's Blog – Writing abstractions for FFI callback interfaces</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h1 class="blog-title"><a href="index.html">Casper's Blog</a></h1>
+      <p class="tagline">Thoughts on code, systems, and craft.</p>
+      <div class="socials">
+        <a href="https://github.com/CasualX">GitHub</a>
+      </div>
+    </aside>
+
+    <!-- Blog post -->
+    <main class="post">
+
+
+<article>
+  <h1>Writing abstractions for FFI callback interfaces</h1>
+  <div class="meta"><span class="date">Oct 18, 2016</span> — <span class="author">by Casper</span> — <span class="tags-inline">rust</span></div>
+<p>Everyone's favourite pastime!</p>
+<p>Callbacks can be separated in two categories: those which pass a context pointer and those which don't. They require considerably different designs to abstract over!</p>
+<h2>Callbacks with context</h2>
+<p>Let us consider an extern function that simply calls the callback.</p>
+<pre><code class="language-rust">mod sys {
+	use std::os::raw::{c_void, c_int};
+
+	// This looks ugly but it's pretty simple:
+	// It iterates over some abstract items, calling the callback for each
+	// Upon returning `0` will it return the item from that callback.
+	// In C tradition a negative return value indicates an error.
+	pub unsafe extern &quot;C&quot; fn items(
+		callback: unsafe extern &quot;C&quot; fn(item: c_int, user_ptr: *mut c_void) -&gt; c_int,
+		user_ptr: *mut c_void
+	) -&gt; c_int {
+		// Silly implementation for demonstrational purposes
+		if callback(42, user_ptr) == 0 {
+			return -1;
+		}
+		else {
+			return 42;
+		}
+	}
+}
+</code></pre>
+<p>Creating an abstraction for this is pretty simple.</p>
+<p>Keep in mind that the API only allows us to pass a thin pointer and <code>&amp;mut FnMut()</code> is a fat pointer! Furtunately <code>mem::transmute</code> will catch such mistakes. <code>&amp;mut &amp;mut FnMut()</code> is a thin pointer but for my sanity I like to write it out with an explicit struct.</p>
+<pre><code class="language-rust">use std::mem;
+use std::os::raw::{c_void, c_int};
+
+// Explicit context for the wrapper.
+struct Items&lt;'a&gt;(&amp;'a mut FnMut(i32) -&gt; bool);
+
+// This is the unsafe wrapper that satisfies the interface.
+unsafe extern &quot;C&quot; fn items_thunk(item: c_int, user_ptr: *mut c_void) -&gt; c_int {
+	// Extract the callback from the `user_ptr`.
+	let ctx: &amp;mut Items = mem::transmute(user_ptr);
+	// Call it and transform to expected output.
+	if (ctx.0)(item) { 1 } else { 0 }
+}
+</code></pre>
+<p>Note: The callback invocation should not panic as it could unwind into FFI code which is UB.</p>
+<p>However <code>catch_unwind</code> won't work here as you are not allowed to move the <code>&amp;mut Items</code> context into the catch handler. Ugh... See <a href="#further-considerations">Further considerations</a>.</p>
+<p>Now the public API for this wrapper.</p>
+<pre><code class="language-rust">#[inline]
+pub fn items&lt;F&gt;(mut f: F) -&gt; Option&lt;i32&gt; where F: FnMut(i32) -&gt; bool {
+	let code = unsafe {
+		let mut ctx = Items(&amp;mut f);
+		sys::items(items_thunk, mem::transmute(&amp;mut ctx))
+	};
+	// Wrap the error checking
+	if code &lt; 0 { None }
+	else { Some(code) }
+}
+</code></pre>
+<p>Usage is as elegant as it gets.</p>
+<pre><code class="language-rust">fn main() {
+	// Look for the item `42` which we know exists.
+	let item = items(|item| {
+		item == 42
+	});
+	assert_eq!(item, Some(42));
+
+	// Look for an item that doesn't exist.
+	let not_found = items(|_| {
+		false
+	});
+	assert_eq!(not_found, None);
+}
+</code></pre>
+<p>Make sure to pay attention to what the extern function is doing with the callback! If it is stored in an internal context, annotate its lifetime correctly eg. <code>&lt;'a, F: 'a&gt;</code>. In this case it is not necessary as the closure is never used outside its stack frame.</p>
+<p>Play around with it on the <a href="https://play.rust-lang.org/?gist=d41ae14675f1f44ea0667e424a793522&amp;version=stable&amp;backtrace=0">playground</a>.</p>
+<h2>Callbacks without context</h2>
+<p>The previous trick works only because the extern API passes a thin context pointer through which we can <code>unsafe</code>ly cast to the expected type.</p>
+<p>Let us consider this extern function. Note the lack of any context parameter when installing a handler.</p>
+<pre><code class="language-rust">mod sys {
+	use std::mem;
+	use std::os::raw::{c_void, c_int};
+
+	// The handler fn, maybe null.
+	// Adds some parameters to avoid a trivial solution.
+	pub type HandlerFn = Option&lt;unsafe extern &quot;C&quot; fn(ty: c_int, data: *mut c_void)&gt;;
+	// Uh-oh, global state. For this example this is out of our control.
+	static mut global: HandlerFn = None;
+	// Unsafely installs a global handler and returns the old handler.
+	// You are expected to restore the old handler when you are done.
+	pub unsafe extern &quot;C&quot; fn install(handler: HandlerFn) -&gt; HandlerFn {
+		mem::replace(&amp;mut global, handler)
+	}
+}
+</code></pre>
+<p>Here the <code>HandlerFn</code> handles some event, this event has a <code>ty</code>pe with values <code>0</code> meaning <code>data</code> points to a <code>c_int</code> and <code>1</code> meaning it points to a <code>c_float</code>.</p>
+<p>Our goal is to build an API that nicely abstracts this behaviour in a safe manner.</p>
+<p>I would like to stress that it smuggling in a context pointer is practically impossible. No matter how you slice or dice it, you will not get a <code>self</code> value in there (required for the <code>Fn*</code> traits).</p>
+<p>Note that you <em>could</em> get a context pointer in there if you were to generate thunks at runtime which hard-codes a reference to the <code>self</code>. Yeah not gonna happen.</p>
+<p>First let us abstract the callback itself, all that business with <code>ty</code> and <code>data</code> Rust can clearly do better with its powerful enums.</p>
+<pre><code class="language-rust">// Handler callback arguments in Rustic fashion
+#[derive(Debug)]
+pub enum HandArg&lt;'a&gt; {
+	Int(&amp;'a mut i32),
+	Float(&amp;'a mut f32),
+}
+
+type HandlerFn = Option&lt;fn(HandArg)&gt;;
+</code></pre>
+<p>With this in mind let us try a naive approach. Since there is no context parameter, we'll just accept an <code>fn()</code> argument directly.</p>
+<pre><code class="language-rust">use std::os::raw::{c_int, c_float, c_void};
+
+// Wrapper transforming the arguments before handling control to the user.
+unsafe extern &quot;C&quot; fn thunk(ty: c_int, data: *mut c_void) {
+	let arg = match ty {
+		0 =&gt; HandArg::Int(&amp;mut *(data as *mut c_int)),
+		1 =&gt; HandArg::Float(&amp;mut *(data as *mut c_float)),
+		_ =&gt; panic!(&quot;unexpected type: {} from handler&quot;, ty),
+	};
+	...?
+}
+
+// Automatically restore the old handler! Yay guards!
+struct Guard(sys::HandlerFn);
+impl Drop for Guard {
+	fn drop(&amp;mut self) {
+		unsafe {
+			let _ = sys::install(self.0);
+		}
+	}
+}
+
+fn install(handler: HandlerFn) -&gt; Guard {
+	Guard(unsafe { sys::install(Some(thunk)) })
+}
+</code></pre>
+<p>But this immediately presents some problems. How does <code>thunk</code> know what function to call? It would need a function pointer of some sort to call... But that would be exactly the same as smuggling in a context pointer!</p>
+<p>For this to work, <code>thunk</code> needs to be duplicated for every <code>fn</code> handler so the thunk can statically dispatch the callback. In a way you need some way to 'generate' thunks for every handler. That sounds close to requiring runtime code generation ☹.</p>
+<p>Actually, not really, generics do <em>exactly</em> this, they generate unique instances for every unique type you give it. Unfortunately the direct translation would require Rust support value generics and could look like this (imaginary syntax):</p>
+<pre><code class="language-rust">use std::os::raw::{c_int, c_float, c_void};
+
+// Imaginary generics syntax, constrain value parameter by its type.
+unsafe extern &quot;C&quot; fn thunk&lt;f: fn(HandArg)&gt;(ty: c_int, data: *mut c_void) {
+	let arg = match ty {
+		0 =&gt; HandArg::Int(&amp;mut *(data as *mut c_int)),
+		1 =&gt; HandArg::Float(&amp;mut *(data as *mut c_float)),
+		_ =&gt; panic!(&quot;unexpected type: {} from handler&quot;, ty),
+	};
+	// Imaginary syntax where `f` is a value, not a type. Some day, maybe?
+	f(arg);
+}
+
+fn install&lt;f: fn(HandArg)&gt;() -&gt; Guard {
+	// Generates an instance of `thunk` specialized for this callback.
+	Guard(unsafe { sys::install(Some(thunk::&lt;f&gt;)) })
+}
+</code></pre>
+<p>One thing to take away from this is that <em>generic parameters</em> do not affect the signature of the function if you don't want to. This makes them very powerful in this context.</p>
+<p>So let us use the next best thing with a little more boilerplate: traits!</p>
+<pre><code class="language-rust">use std::os::raw::{c_int, c_float, c_void};
+
+pub trait Handler {
+	// Implement this!
+	fn handle(HandArg);
+
+	// Let's hide this from docs, it's a private detail...
+	#[doc(hidden)]
+	unsafe extern &quot;C&quot; fn thunk(ty: c_int, data: *mut c_void) {
+		let arg = match ty {
+			0 =&gt; HandArg::Int(&amp;mut *(data as *mut c_int)),
+			1 =&gt; HandArg::Float(&amp;mut *(data as *mut c_float)),
+			_ =&gt; panic!(&quot;unexpected type: {} from handler&quot;, ty),
+		};
+		// Call the user-defined handler.
+		Self::handle(arg);
+	}
+}
+
+// Note that the installer only has a generic parameter!
+fn install&lt;H: Handler&gt;() -&gt; Guard {
+	// A new thunk is generated specialized for its callback.
+	Guard(unsafe { sys::install(Some(H::thunk)) })
+}
+</code></pre>
+<p>That will work well enough for our use case; simply create a dummy type and implement <code>Handler</code> with your callback!</p>
+<pre><code class="language-rust">fn main() {
+	enum MyHandler {}
+	impl Handler for MyHandler {
+		fn handle(arg: HandArg) {
+			println!(&quot;{:?}&quot;, arg);
+		}
+	}
+	let _guard = install::&lt;MyHandler&gt;();
+	// Guard will cleanup when it goes out of scope.
+	// Note that *must* give it a name (probably prefixed with an underscore)
+	// If you don't, or name it `_` rust will drop the value right there.
+}
+</code></pre>
+<p>Could do with less boilerplate when Rust gets value generics but this isn't so bad.</p>
+<p>Play around with the working sample on the <a href="https://play.rust-lang.org/?gist=dd4564629ea31ff635fa0056ae5e8fa7&amp;version=stable&amp;backtrace=0">playground</a>.</p>
+<h2>Further considerations</h2>
+<p>FFI and unwinding: Ugh... What if the extern fn just wasn't designed to return errors? Just abort on panic would be my best guess... How do you even abort? Searching for <a href="https://doc.rust-lang.org/std/?search=abort"><code>abort</code></a> does yield a stable function in the standard library. I'd write a type which panics in its <code>Drop</code> impl, that should do the trick. Don't forget to <code>mem::forget</code> it before it goes out of scope.</p>
+<p>In the <a href="#callbacks-without-context">Callbacks without context</a> section the <code>Guard</code> holds a token used to restore some state. If the thunk pointer <em>is</em> the token you can do better by making <code>Guard</code> generic over <code>H: Handler</code> avoiding wasting memory holding on to the token.</p>
+<p>In the <a href="#callbacks-with-context">Callbacks with context</a> section the <code>items_thunk</code> has double indirection but you can apply the same technique by making the thunk generic over an <code>Fn*</code> trait without affecting its signature! This generates a unique thunk for your closure, same trade-offs apply wrt generic bloat.</p>
+<pre><code class="language-rust">// This is the unsafe wrapper that satisfies the interface.
+unsafe extern &quot;C&quot; fn items_thunk&lt;F&gt;(item: c_int, user_ptr: *mut c_void) -&gt; c_int
+	where F: FnMut(i32) -&gt; bool
+{
+	// Extract the callback from the `user_ptr`.
+	let f: &amp;mut F = mem::transmute(user_ptr);
+	// Call it and transform to expected output.
+	if f(item) { 1 } else { 0 }
+}
+</code></pre>
+
+</article>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>© 2016 Casper — Content licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a></p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

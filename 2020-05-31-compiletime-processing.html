@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casper's Blog – Compiletime processing in Rust</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h1 class="blog-title"><a href="index.html">Casper's Blog</a></h1>
+      <p class="tagline">Thoughts on code, systems, and craft.</p>
+      <div class="socials">
+        <a href="https://github.com/CasualX">GitHub</a>
+      </div>
+    </aside>
+
+    <!-- Blog post -->
+    <main class="post">
+
+
+<article>
+  <h1>Compiletime processing in Rust</h1>
+  <div class="meta"><span class="date">May 31, 2020</span> — <span class="author">by Casper</span> — <span class="tags-inline">rust</span></div>
+<p>Ever since proc-macros were stabilized I explored their utility for compiletime processing. This approach using proc-macro has its drawbacks: it's an extra dependency which takes time to build and lack of sharing implementation used by the proc-macro and the main crate if you want both runtime and compiletime functionality.</p>
+<p>With the recent progress on const and generic functions in Rust I decided to see if I can rewrite some of my proc-macros to use const generics instead.</p>
+<h2>Part I: Compiletime string processing</h2>
+<p>The crate under inspection is my <a href="https://crates.io/crates/obfstr"><code>obfstr</code></a> crate which (among some other utilities) provides compiletime string obfuscation. I want to rewrite it using const fn instead of using proc-macros.</p>
+<p>The idea of string obfuscation is to avoid baking the string literal as-is in the binary and instead store an obfuscated version of the string which gets deobfuscated as needed.</p>
+<p>Let's define the desired interface:</p>
+<pre><code class="language-rust">// An instance of this struct is baked in the binary
+struct ObfString&lt;A&gt; {
+	key: u8,
+	data: A,
+}
+
+// Given a string literal produces the desired obfuscated string at compiletime
+pub const fn obfuscate&lt;const LEN: usize&gt;(s: &amp;str) -&gt; ObfString&lt;[u8; LEN]&gt;;
+</code></pre>
+<p>With this function signature we still have to specify the string length separately but fortunately this can be remedied using a <code>macro_rules</code> macro:</p>
+<!-- {% raw %} -->
+<pre><code class="language-rust">macro_rules! obfuscate {
+	($s:literal) =&gt; {{
+		const STRING: ObfString&lt;[u8; {$s.len()}]&gt; = obfuscate::&lt;{$s.len()}&gt;(s);
+		STRING
+	}};
+}
+</code></pre>
+<!-- {% endraw %} -->
+<p>Note the use of <code>{$s.len()}</code> when passing the length as the const generic argument. It would be nice if there was some way for some kind of type inference to deduce the LEN parameter based on the input's length.</p>
+<p>Putting it together: <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=ff10a24947a0c247396cca2e099ba445">playground</a></p>
+<p>Of course this isn't yet very useful but we've managed to define the basic ingredients and the Rust compiler doesn't complain!</p>
+<p>So let's implement the obfuscate function:</p>
+<pre><code class="language-rust">pub const fn obfuscate&lt;const LEN: usize&gt;(s: &amp;str, key: u8) -&gt; ObfString&lt;[u8; LEN]&gt; {
+	let s = s.as_bytes();
+	let mut data = [0u8; LEN];
+	let mut i = 0usize;
+	while i &lt; s.len() {
+		data[i] = s[i] ^ key as u8;
+		i += 1;
+	}
+	ObfString { key, data }
+}
+</code></pre>
+<p>To make this code work some magic is required. First of <code>for</code> loops are not supported but while loops are.</p>
+<p>Inspect a complete example on the <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=f454e8966aadcc0372d4fc4ae3187c6c">playground</a>, it prints:</p>
+<pre><code>ObfString { key: ca, data: [a2, af, a6, a6, a5] }
+</code></pre>
+<p>Success!</p>
+<p>Another example to blow your mind is a compiletime UTF-8 to UTF-16 converter: <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=3f65a51ef44e449f598016eb244a5291">playground</a></p>
+<pre><code class="language-rust">fn main() {
+	let actual = wide!(&quot;🌍&quot;);
+	let expected = &amp;[0xd83c, 0xdf0d];
+	println!(&quot;{:x?}&quot;, actual);
+	assert_eq!(actual, expected);
+}
+</code></pre>
+<p>No proc-macros required, just a const generic function :)</p>
+<h1>Part II: Compiletime random numbers</h1>
+<p>In the previous examples the key <code>0xca</code> was hardcoded for the obfuscation. It would be much nicer if this key could be random and per invocation of the obfuscate macro without any input from the caller.</p>
+<p>This may seem to be impossible as that would imply the source code is no longer deterministic but this isn't the case, welcome our good friends <code>file!()</code>, <code>line!()</code> and <code>column!()</code>. These macros return the file name, line and column number where they are invoked.</p>
+<p>We can use these values as entropy to feed into a pseudo-random number generator (PRNG). Luckily for us these values are filled in the actual source location they're used (and not the macro location they're defined) so we can wrap them up in a helper.</p>
+<p>In order to do this we'll need to process the <code>file!()</code> string into a number, but that's simple enough through our good ol' friend DJB2 compiletime string hash:</p>
+<pre><code class="language-rust">pub const fn hash(s: &amp;str) -&gt; u32 {
+	let s = s.as_bytes();
+	let mut hash = 3581u32;
+	let mut i = 0usize;
+	while i &lt; s.len() {
+		hash = hash.wrapping_mul(33).wrapping_add(s[i] as u32);
+		i += 1;
+	}
+	return hash;
+}
+</code></pre>
+<p>For the final mixing we'll use the SplitMix PRNG:</p>
+<pre><code class="language-rust">pub const fn splitmix(seed: u64) -&gt; u64 {
+	let next = seed.wrapping_add(0x9e3779b97f4a7c15);
+	let mut z = next;
+	z = (z ^ (z &gt;&gt; 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+	z = (z ^ (z &gt;&gt; 27)).wrapping_mul(0x94d049bb133111eb);
+	return z ^ (z &gt;&gt; 31);
+}
+</code></pre>
+<p>For fun let's mix in some external entropy defined by the user in the form of an environment variable (supported by a build script which defines a dummy value in case the env var is not defined):</p>
+<pre><code class="language-rust">pub const SEED: u64 = splitmix(hash(env!(&quot;OBFSTR_SEED&quot;)) as u64);
+</code></pre>
+<p>Putting it all together to turn <code>file!()</code>, <code>line!()</code> and <code>column!()</code> into pure entropy:</p>
+<!-- {% raw %} -->
+<pre><code class="language-rust">pub const fn entropy(file: &amp;str, line: u32, column: u32) -&gt; u64 {
+	splitmix(SEED ^ (hash(file) as u64 ^ (line as u64).rotate_left(32) ^ (column as u64).rotate_left(48)))
+}
+
+macro_rules! entropy {
+	() =&gt; {{
+		const ENTROPY: u64 = entropy(file!(), line!(), column!());
+		ENTROPY
+	}};
+}
+</code></pre>
+<!-- {% endraw %} -->
+<p>See it in action: <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2018&amp;gist=5d0ec37da9d8bbe4198d3c6370ff5a52">playground</a></p>
+<p>It should reliably print <code>17854532005703890967, 8926035397751327455</code> for everyone. Tiny pertubations in the source code will produce different entropy, even shifting the line with the <code>entropy!()</code> macro with a single space character.</p>
+<p>This keeps the whole thing random yet deterministic.</p>
+<h2>Part III: Compiletime parsing</h2>
+<p>While I'm happy I was able to convert this crate to use const fn for its implementation, I have some other proc-macros that I cannot yet convert.</p>
+<p>Let's say you've created some <a href="https://en.wikipedia.org/wiki/Domain-specific_language">Domain-specific language (DSL)</a> and wrote a parser for that DSL in Rust which produces some bytecode in the form of <code>Vec&lt;u8&gt;</code>, eg:</p>
+<pre><code class="language-rust">pub fn parse(s: &amp;str) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt;;
+</code></pre>
+<p>Of course at runtime the result's length is derived from the contents of the input, but at compiletime the result has a deterministic length! It would be silly to force an allocation of <code>Vec&lt;u8&gt;</code> when the parser was const evaluated at compiletime. Ideally I would want to get back a <code>[u8; _]</code> to bake the result of the parser directly in my binary.</p>
+<p>Reduced to its most essential it is the following idea; why can't this code be evaluated at compiletime?</p>
+<pre><code class="language-rust">const ANSWER: &amp;str = &amp;42.to_string();
+</code></pre>
+<p>To be more specific, the clever trick from earlier <em>should really look</em> like this instead:</p>
+<pre><code class="language-rust">pub const fn wide(s: &amp;str) -&gt; &amp;'static [u16] {
+	&amp;&quot;🌍&quot;.encode_utf16().collect::&lt;Vec&lt;u16&gt;&gt;()
+}
+
+const STRING: &amp;[u16] = wide(&quot;🌍&quot;);
+</code></pre>
+<p>Using a proc-macro this is all possible today but I hope some day in the future this could be replaced by simple const fn.</p>
+<h2>Part IV: Compiletime all the things</h2>
+<p>Const functions are really nice and can replace some usage of proc-macros. I hope to see const functions further developed and stabilized in the Rust language.</p>
+<p>Specifically when it comes to traits (const traits? const trait methods?) there is a huge world to explore.</p>
+<p>Thanks for reading!</p>
+
+</article>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>© 2020 Casper — Content licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a></p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

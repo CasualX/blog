@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casper's Blog – Trait objects and helper methods</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h1 class="blog-title"><a href="index.html">Casper's Blog</a></h1>
+      <p class="tagline">Thoughts on code, systems, and craft.</p>
+      <div class="socials">
+        <a href="https://github.com/CasualX">GitHub</a>
+      </div>
+    </aside>
+
+    <!-- Blog post -->
+    <main class="post">
+
+
+<article>
+  <h1>Trait objects and helper methods</h1>
+  <div class="meta"><span class="date">May 11, 2017</span> — <span class="author">by Casper</span> — <span class="tags-inline">rust</span></div>
+<p>There is a pattern in C++ and other languages where you create an interface with some methods to be overridden and some final helper methods (typically inlined) for convenience.</p>
+<p>I'll use the following example (<a href="http://cpp.sh/4gtzn">cpp.sh</a>):</p>
+<pre><code class="language-c++">#include &lt;string&gt;
+#include &lt;typeinfo&gt;
+#include &lt;cstring&gt;
+#include &lt;cassert&gt;
+
+class IQuery {
+public:
+	virtual const void* Query(const std::type_info&amp; ty, const char* name) const = 0;
+
+	template&lt;typename T&gt;
+	inline const T* Get(const char* name) const {
+		return (const T*)this-&gt;Query(typeid(T), name);
+	}
+};
+
+class Parameters : public IQuery {
+public:
+	Parameters(int i, float f, std::string s) : i(i), f(f), s(std::move(s)) {}
+
+	virtual const void* Query(const std::type_info&amp; ty, const char* name) const {
+		if (!strcmp(name, &quot;i&quot;)) {
+			return ty == typeid(int) ? &amp;this-&gt;i : nullptr;
+		}
+		else if (!strcmp(name, &quot;f&quot;)) {
+			return ty == typeid(float) ? &amp;this-&gt;f : nullptr;
+		}
+		else if (!strcmp(name, &quot;s&quot;)) {
+			return ty == typeid(std::string) ? &amp;this-&gt;s : nullptr;
+		}
+		return nullptr;
+	}
+
+private:
+	int i;
+	float f;
+	std::string s;
+};
+
+int main()
+{
+	Parameters p(42, 3.1415927, &quot;Hello world!&quot;);
+	assert(*p.Get&lt;int&gt;(&quot;i&quot;) == 42);
+	assert(*p.Get&lt;float&gt;(&quot;f&quot;) == 3.1415927);
+	assert(*p.Get&lt;std::string&gt;(&quot;s&quot;) == &quot;Hello world!&quot;);
+
+	IQuery* q = &amp;p;
+	assert(*q-&gt;Get&lt;int&gt;(&quot;i&quot;) == 42);
+	assert(*q-&gt;Get&lt;float&gt;(&quot;f&quot;) == 3.1415927);
+	assert(*q-&gt;Get&lt;std::string&gt;(&quot;s&quot;) == &quot;Hello world!&quot;);
+}
+</code></pre>
+<p>The example demonstrates the pattern of creating an implementable interface with convenience methods to handle the ugly casting.</p>
+<p>A first attempt to convert this to Rust: <a href="https://play.rust-lang.org/?gist=c0cd054c5df1595447cb99573e7328ff&amp;version=stable&amp;backtrace=0">playground</a></p>
+<pre><code class="language-rust">use ::std::any::{Any};
+
+trait IQuery {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt;;
+
+	fn get&lt;'s, T: 'static&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s T&gt; {
+		self.query(name).and_then(|val| val.downcast_ref())
+	}
+}
+
+struct Parameters {
+	i: i32,
+	f: f64,
+	s: String,
+}
+impl IQuery for Parameters {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt; {
+		match name {
+			&quot;i&quot; =&gt; Some(&amp;self.i),
+			&quot;f&quot; =&gt; Some(&amp;self.f),
+			&quot;s&quot; =&gt; Some(&amp;self.s),
+			_ =&gt; None,
+		}
+	}
+}
+
+fn main() {
+	let p = Parameters {
+		i: 42,
+		f: 3.1415927,
+		s: String::from(&quot;Hello world!&quot;),
+	};
+	assert_eq!(p.get(&quot;i&quot;), Some(&amp;42));
+	assert_eq!(p.get(&quot;f&quot;), Some(&amp;3.1415927));
+	assert_eq!(p.get(&quot;s&quot;), Some(&amp;String::from(&quot;Hello world!&quot;)));
+
+	let q = &amp;p as &amp;IQuery;
+	assert_eq!(q.get(&quot;i&quot;), Some(&amp;42));
+	assert_eq!(q.get(&quot;f&quot;), Some(&amp;3.141592));
+	assert_eq!(q.get(&quot;s&quot;), Some(&amp;String::from(&quot;Hello world!&quot;)));
+}
+</code></pre>
+<p>This works but has an unfortunate limitation: the trait isn't object-safe!</p>
+<pre><code>rustc 1.17.0 (56124baa9 2017-04-24)
+error[E0038]: the trait `IQuery` cannot be made into an object
+  --&gt; &lt;anon&gt;:37:16
+   |
+37 | 	let q = &amp;p as &amp;IQuery;
+   | 	              ^^^^^^^ the trait `IQuery` cannot be made into an object
+   |
+   = note: method `get` has generic type parameters
+</code></pre>
+<p>Rust offers a canonical solution [<a href="https://huonw.github.io/blog/2015/05/where-self-meets-sized-revisiting-object-safety/">1</a>]: mark the offending methods with <code>where Self: Sized</code> bounds: <a href="https://play.rust-lang.org/?gist=3e27aa2d1f1f4d37a93f5768ed907d77&amp;version=stable&amp;backtrace=0">playground</a></p>
+<pre><code class="language-rust">trait IQuery {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt;;
+
+	fn get&lt;'s, T: 'static&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s T&gt;
+		where Self: Sized
+	{
+		self.query(name).and_then(|val| val.downcast_ref())
+	}
+}
+</code></pre>
+<p>Unfortunately this won't get us the whole way there, see we've filtered out the convenience methods such that they're completely unavailable on trait objects!</p>
+<pre><code>rustc 1.17.0 (56124baa9 2017-04-24)
+error[E0277]: the trait bound `IQuery: std::marker::Sized` is not satisfied
+  --&gt; &lt;anon&gt;:40:15
+   |
+40 | 	assert_eq!(q.get(&quot;i&quot;), Some(&amp;42));
+   | 	             ^^^ the trait `std::marker::Sized` is not implemented for `IQuery`
+   |
+   = note: `IQuery` does not have a constant size known at compile-time
+</code></pre>
+<p>This somewhat confusing error message is trying to say you cannot call <code>get</code> on a <code>&amp;IQuery</code> which requires that <code>Self</code> is <code>Sized</code>, since <code>Self</code> is a 'bare' trait (not behind a reference) it is not <code>Sized</code>.</p>
+<p>To me it was not entirely clear how to proceed from here. You can implement methods on the trait object type itself through the syntax <code>impl&lt;'a&gt; IQuery + 'a { }</code> but now you've just inverted the problem: those methods are only available on trait objects!</p>
+<p>Attempting to define them both in the trait and on the trait object makes the compiler yell loudly at you: <a href="https://play.rust-lang.org/?gist=465792c877172dd2f65b287ae6c7530f&amp;version=stable&amp;backtrace=0">playground</a></p>
+<pre><code>rustc 1.17.0 (56124baa9 2017-04-24)
+error[E0034]: multiple applicable items in scope
+  --&gt; &lt;anon&gt;:45:15
+   |
+45 | 	assert_eq!(q.get(&quot;i&quot;), Some(&amp;42));
+   | 	             ^^^ multiple `get` found
+   |
+note: candidate #1 is defined in an impl for the type `IQuery`
+  --&gt; &lt;anon&gt;:13:2
+   |
+13 |   	fn get&lt;'s, T: 'static&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s T&gt; {
+   |  __^ starting here...
+14 | | 		self.query(name).and_then(|val| val.downcast_ref())
+15 | | 	}
+   | |__^ ...ending here
+note: candidate #2 is defined in the trait `IQuery`
+  --&gt; &lt;anon&gt;:6:2
+   |
+6  |   	fn get&lt;'s, T: 'static&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s T&gt;
+   |  __^ starting here...
+7  | | 		where Self: Sized
+8  | | 	{
+9  | | 		self.query(name).and_then(|val| val.downcast_ref())
+10 | | 	}
+   | |__^ ...ending here
+   = help: to disambiguate the method call, write `IQuery::get(&amp;q, &quot;i&quot;)` instead
+</code></pre>
+<p>I'm unsure how to describe the solution so I'll just let the code speak for itself: <a href="https://play.rust-lang.org/?gist=70f8a1cb7e5488a7d3757f5eb5b505c4&amp;version=stable&amp;backtrace=0">playground</a></p>
+<pre><code class="language-rust">impl&lt;'a, T: 'a + ?Sized + IQuery&gt; IQuery for &amp;'a T {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt; {
+		IQuery::query(*self, name)
+	}
+}
+</code></pre>
+<p>We're almost there. The above block implements the <code>IQuery</code> interface for all references to <code>T</code> implementing <code>IQuery</code>. The <code>?Sized</code> bound means this also applies to trait objects!</p>
+<pre><code>rustc 1.17.0 (56124baa9 2017-04-24)
+error[E0277]: the trait bound `IQuery: std::marker::Sized` is not satisfied
+  --&gt; &lt;anon&gt;:45:15
+   |
+45 | 	assert_eq!(q.get(&quot;i&quot;), Some(&amp;42));
+   | 	             ^^^ the trait `std::marker::Sized` is not implemented for `IQuery`
+   |
+   = note: `IQuery` does not have a constant size known at compile-time
+</code></pre>
+<p>Drat! What's going on here is that Rust is selecting the wrong <code>IQuery</code> implementation. You can fix this by calling <code>(&amp;q).get</code>...</p>
+<p>Another solution is to let your <code>Self: Sized</code> bounded methods take <code>self</code> (in which case the <code>Self</code> type will be resolved to <code>&amp;IQuery</code> when going through the blanket impl). However since there's a lifetime involved this isn't possible here...</p>
+<p>And that's where I'm stuck for now. If anyone has an idea to get past this last hurdle, do let me know!</p>
+<p>The final working code, with workaround: <a href="https://play.rust-lang.org/?gist=4fa46a83576f35498782634a3dbefded&amp;version=stable&amp;backtrace=0">playground</a></p>
+<pre><code class="language-rust">use ::std::any::{Any};
+
+trait IQuery {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt;;
+
+	fn get&lt;'s, T: 'static&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s T&gt;
+		where Self: Sized
+	{
+		self.query(name).and_then(|val| val.downcast_ref())
+	}
+}
+impl&lt;'a, T: 'a + ?Sized + IQuery&gt; IQuery for &amp;'a T {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt; {
+		IQuery::query(*self, name)
+	}
+}
+
+struct Parameters {
+	i: i32,
+	f: f64,
+	s: String,
+}
+impl IQuery for Parameters {
+	fn query&lt;'s&gt;(&amp;'s self, name: &amp;str) -&gt; Option&lt;&amp;'s Any&gt; {
+		match name {
+			&quot;i&quot; =&gt; Some(&amp;self.i),
+			&quot;f&quot; =&gt; Some(&amp;self.f),
+			&quot;s&quot; =&gt; Some(&amp;self.s),
+			_ =&gt; None,
+		}
+	}
+}
+
+fn main() {
+	let p = Parameters {
+		i: 42,
+		f: 3.1415927,
+		s: String::from(&quot;Hello world!&quot;),
+	};
+	assert_eq!(p.get(&quot;i&quot;), Some(&amp;42));
+	assert_eq!(p.get(&quot;f&quot;), Some(&amp;3.1415927));
+	assert_eq!(p.get(&quot;s&quot;), Some(&amp;String::from(&quot;Hello world!&quot;)));
+
+	let q = &amp;p as &amp;IQuery;
+	assert_eq!((&amp;q).get(&quot;i&quot;), Some(&amp;42));
+	assert_eq!((&amp;q).get(&quot;f&quot;), Some(&amp;3.1415927));
+	assert_eq!((&amp;q).get(&quot;s&quot;), Some(&amp;String::from(&quot;Hello world!&quot;)));
+}
+</code></pre>
+
+</article>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>© 2017 Casper — Content licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a></p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

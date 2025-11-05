@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Casper's Blog – The Rust 2021 Experience - Year of the Macro</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h1 class="blog-title"><a href="index.html">Casper's Blog</a></h1>
+      <p class="tagline">Thoughts on code, systems, and craft.</p>
+      <div class="socials">
+        <a href="https://github.com/CasualX">GitHub</a>
+      </div>
+    </aside>
+
+    <!-- Blog post -->
+    <main class="post">
+
+
+<article>
+  <h1>The Rust 2021 Experience - Year of the Macro</h1>
+  <div class="meta"><span class="date">Oct 5, 2020</span> — <span class="author">by Casper</span> — <span class="tags-inline">rust</span></div>
+<p>Part of a series for the <a href="https://blog.rust-lang.org/2020/09/03/Planning-2021-Roadmap.html">Call for 2021 Roadmap Blogs</a>.</p>
+<p>Macros enable writing powerful domain-specific languages within the Rust language itself. When I finally mastered declarative macros, tt-munchers' power allows me to write intricate and complex macros.</p>
+<p>When the procedural macro MVP was stabilized last year, it was love at first sight. I can do so much more than what was possible with declarative macros, including a much wider range of syntax transformations as well as attribute and derive syntax. However, the honeymoon period is over, and its rough edges are exposed.</p>
+<p>So here is my wishlist for macros in 2021:</p>
+<h3>Keep improving const fn</h3>
+<p>I've explored using procedural macros as a more powerful version of const fn, but it has so many rough edges that make them borderline unusable for this purpose. Let's demonstrate with an example: I wrote a <a href="https://docs.rs/pelite/0.9.0/pelite/pattern/fn.parse.html">small language</a> for matching code patterns in binaries. It comes with a parser with the following signature:</p>
+<pre><code class="language-rust">pub fn parse(pat: &amp;str) -&gt; Result&lt;Vec&lt;Atom&gt;, ParsePatError&gt;;
+</code></pre>
+<p>This parser is commonly invoked with a string constant, and in those cases, I would like to parse them at compiletime and return a <code>&amp;'static [Atom]</code> directly (or fail compilation if there's an error).</p>
+<p>Wrapping this parser as a procedural macro leads to the following issues:</p>
+<p>Because procedural macros live in separate crates, it becomes hard to share this parsing code between the procedural macro and the runtime parser. I used a trick to hotlink the same source code in both crates:</p>
+<pre><code class="language-rust">#[path = &quot;../pattern.rs&quot;]
+mod pattern;
+</code></pre>
+<p>While this works locally, crates.io does not accept this as technically the path links to a file outside the procedural macro's crate root (separate from the project's crate root). This horribly mangles my crate release procedure...</p>
+<p>Ideally, this should be a const fn, but you see the issue of how a const fn is supposed to turn that <code>Vec&lt;Atom&gt;</code> into a <code>&amp;'static [Atom]</code>? An idea I have is to turn <a href="https://doc.rust-lang.org/std/vec/struct.Vec.html#method.leak"><code>Vec::leak</code></a> into a const fn, which would allow writing a declarative macro which wraps this parser for compiletime evaluation:</p>
+<pre><code class="language-rust">#[macro_export]
+macro_rules! parse {
+	($s:expr) =&gt; {
+		{
+			// Make a const to force compiletime const fn evaluation
+			const PAT: &amp;[$crate::pattern::Atom] =
+				$crate::pattern::parse($s).unwrap().leak();
+			PAT
+		}
+	};
+}
+</code></pre>
+<p>I understand that const fn is not ready for this use case, but I hope it will be powerful enough someday.</p>
+<h3>Proc-macro sister <code>$crate</code></h3>
+<p>When designing a declarative macro that depends the current crate items, this useful meta macro variable called <code>$crate</code>, which expands to whatever path is necessary to resolve to the crate the macro is defined in.</p>
+<p>The <code>$crate</code> variable is necessary to allow a declarative macro to work correctly within the crate that defined it and when used by downstream users. e.g.</p>
+<pre><code class="language-rust">pub struct Foo {}
+
+#[macro_export]
+macro_rules! Foo {
+	() =&gt; { $crate::Foo{} };
+}
+</code></pre>
+<p>When the macro is expanded within the crate that defined it without the <code>$crate::</code> prefix, it works correctly as <code>Foo</code> is in scope. Now let's expand it in a foreign crate: the <code>Foo</code> symbol would need to be explicitly imported, which may not be desired. When replacing the <code>$crate::</code> prefix with <code>::crate_name::</code> the macro functions correctly when invoked by a foreign crate but not within the crate that defined it. There's a similarity with the <code>crate::</code> pseudo module to refer to items from your crate.</p>
+<p>Unfortunately, procedural macros have no such luxury. Because they are defined in a separate crate they have no explicit way to refer to items defined in a sister crate. Once you start re-exporting procedural macros and <a href="https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#renaming-dependencies-in-cargotoml">renaming dependencies</a>, things go south quickly.</p>
+<p>In essence, I'm missing the ability to statically 'link' the procedural macro to the items defined in its sister crate. Rust is tracking this issue on its <a href="https://github.com/rust-lang/rust/issues/54363">issue tracker</a>.</p>
+<p>For me, this causes friction when creating procedural macros that don't stand alone and makes me try building the desired macro as a declarative macro before using the procedural macro hammer to solve my problem.</p>
+<h3>Finalize the long-awaited declarative macro 2.0 syntax</h3>
+<p>A post about declarative macros can't be complete without mentioning the new and improved macros by example 2.0: Looking at its <a href="https://github.com/rust-lang/rust/issues/39412">tracking issue</a>, it seems to have stalled a long time ago.</p>
+<p>I'd love to see this feature finalized and pulled over the finish line.</p>
+<h3>Declarative attribute and derive macros</h3>
+<p>Procedural macros have another cool superpower that they can be used with the <code>#[attribute]</code> and <code>#[derive(Trait)]</code> syntaxes.</p>
+<p>However, the restriction that procedural macros must live in a separately published crate causes a lot of friction and headaches. The ability to use declarative macros as attribute and derive macros is my top wish.</p>
+<p>Someone made a procedural macro adapter for this purpose: <a href="https://crates.io/crates/macro_rules_attribute">macro_rules_attribute crate</a>. However, the experience is not seamless, so I would love to see this supported by Rust out of the box.</p>
+<h3>Eager evaluation of macro arguments</h3>
+<p>The arguments provided to macros are called 'token trees'. They are straightforward and contain no further meaning other than balancing brackets. Anything that is a valid Rust token is allowed to come in any order.</p>
+<p>What happens if you were to 'invoke' a macro in the arguments of another macro? Example:</p>
+<pre><code class="language-rust">let x = foo!(concat!(&quot;hello&quot;, &quot;world&quot;));
+</code></pre>
+<p>The result is nothing special; the arguments are passed as a token tree: <code>[Ident(concat), Punct(!), Group([Literal(&quot;hello&quot;), Punct(,), Literal(&quot;world&quot;)])]</code>. It is a desired feature have the option to expand a macro before passing its output into another macro.</p>
+<p>Eager macro expansion is a long-standing feature request, with an open <a href="https://github.com/rust-lang/rfcs/pull/2320">RFC PR#2320</a>.</p>
+<h3>Create hygienic identifiers</h3>
+<p>Today it is impossible to create identifiers within a declarative macro from a concatenation of identifier parts. This prevents macros from generating boilerplate code, which involves producing a bunch of similarly named functions.</p>
+<p>The idea I have is outlined by the following built-in macro defined by the Rust compiler which provides a safe and targetted opt-out of macro hygiene:</p>
+<pre><code class="language-rust">macro_rules! create_ident {
+	($scope:ident, $($parts:ident)+) =&gt; { ... }
+}
+</code></pre>
+<p>The idea is that you have to provide a <em>scope</em> in which the identifier should be created, followed by a list of identifier parts that should be concatenated to form the final identifier. These rules keeps the resulting identifier hygienic.</p>
+<h3>Named and default value arguments syntax extension</h3>
+<p>Rust attribute macros work at the AST level, meaning that its input must be parsed as valid Rust code for an attribute macro to be invoked. This limitation restricts how attribute macros can be used to experiment with Rust language extensions.</p>
+<p>It would be cool to see fewer restrictions on the syntax parsing of Rust. Of course, the code would still produce an error later in the pipeline, but delaying the reporting of the error would allow attribute macros to rewrite the code into valid Rust.</p>
+<p>This becomes especially interesting with named and default arguments, eg.</p>
+<pre><code class="language-rust">#[named]
+pub fn foo(a: i32 = 42) {
+	//...
+}
+</code></pre>
+<p>This would remain invalid Rust code today, but delaying the reporting of the error, the attribute macro could rewrite this in interesting ways.</p>
+<h3>Macros in method call position</h3>
+<p>Finally, I'd love to see macros allowed in method call position:</p>
+<pre><code class="language-rust">// This is the desired syntactic sugar:
+let x = 42.foo!(arg).baz!(a: 13);
+
+// Rewritten like this where _tmpN is captured as an opaque $expr:
+let x = match 42 {
+	_tmp1 =&gt; match foo!(_tmp1, arg) {
+		_tmp2 =&gt; baz!(_tmp2, a: 13)
+	}
+};
+</code></pre>
+<p>Provide the evaluated <code>self</code> as the first argument (captured as an opaque <code>expr</code> fragment) to the macro and pass any additional tokens to the macro. This syntactic sugar is not to allow the macro to inspect the <code>self</code> argument but to focus on interesting designs possible with the macro arguments.</p>
+<p>There has been some discussion on this topic, also called 'postfix macros': <a href="https://old.reddit.com/r/rust/comments/6eegy3/macros_method_call_syntax/">[1]</a> <a href="https://github.com/rust-lang/rfcs/pull/2442">[2]</a></p>
+<p>There are a lot of interesting trade-offs:</p>
+<p>Should <code>self</code> be passed as tokens or an opaque expr? I'm in favor of the latter. The focus is on the macro arguments, not the receiver. This also ensures the receiver is evaluated exactly once.</p>
+<p>Should it be possible to scope the macro to certain types? Now it's getting interesting. Because macros are expanded before types are inferred, I'm not sure how feasible it is to implement. This feature would be entirely backward compatible with 'type aware' macros being added in the future. Here it would only look up macros in the module scope.</p>
+<p>This syntax has the potential to unlock so many possibilities that I think it's well worth reconsidering such a proposal. Even without 'type aware' macros, it could produce interesting new designs.</p>
+<h3>Conclusion</h3>
+<p>This post is long enough as it is. Thanks for reading!</p>
+
+</article>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>© 2020 Casper — Content licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a></p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
